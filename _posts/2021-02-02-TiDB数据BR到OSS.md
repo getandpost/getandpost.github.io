@@ -42,19 +42,29 @@ mkdir -p /ossfs
 chown -R tidb:tidb /ossfs
 su tidb
 cd ~
-echo xxx-cluster:LTAIbZcdVCmQ****:MOk8x0y9hxQ31coh7A5e2MZEUz**** > ~/passwd-ossfs
-chmod 640 ~/passwd-ossfs
-ossfs xxx-cluster/tidbbak /ossfs -ourl=http://oss-cn-shenzhen.aliyuncs.com
+echo xxx-cluster:LTAIbZcdVCmQ****:MOk8x0y9hxQ31coh7A5e2MZEUz**** > ~/.passwd-ossfs
+chmod 600 ~/.passwd-ossfs
+ossfs xxx-cluster /ossfs -ourl=http://oss-cn-shenzhen.aliyuncs.com
 ```
 
 5.如果您不希望继续挂载此Bucket，您可以将其卸载。
 ```
 fusermount -u /ossfs
 ```
+遇到fusermount: failed to unmount : Device or resource busy错误可以使用：
+```
+fusermount -zu /ossfs
+```
 
 ### 使用BR备份集群
+**注意：** br版本要跟tidb集群的版本一致。执行 BR 的用户和启动 TiKV 的用户要相同。
 ```
 su tidb
 mkdir -p /ossfs/20220202
+#备份数据库
 br backup table --pd "10.0.0.80:2379" --db xxx --table t -s "local:///ossfs/tidbbak/20220202" --log-file backup-nfs.log
+
+#备份集群
+./br backup full --pd 10.0.0.80:2379 -s "local:///tidbbak/full_20210203" --log-file backupdb_full.log
 ```
+如果是OSS挂载方式，在OSS文件管理删除了backup.lock后，还会报Error: backup lock exists, may be some backup files in the path already: [BR:Common:ErrInvalidArgument]invalid argument错误。先fusermount再重新ossfs挂载即可。

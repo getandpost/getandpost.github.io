@@ -5,6 +5,8 @@
 
 参考阿里官方文档：对象存储 OSS > 常用工具 > ossfs > [快速安装](https://help.aliyun.com/document_detail/153892.html?spm=a2c4g.11186623.6.919.75202b4fdhzMdH)
 
+文档高级配置部分要仔细阅读。
+
 ### 运行环境
 Ubuntu 20.04
 
@@ -68,3 +70,45 @@ br backup table --pd "10.0.0.80:2379" --db xxx --table t -s "local:///ossfs/tidb
 ./br backup full --pd 10.0.0.80:2379 -s "local:///tidbbak/full_20210203" --log-file backupdb_full.log
 ```
 如果是OSS挂载方式，在OSS文件管理删除了backup.lock后，还会报Error: backup lock exists, may be some backup files in the path already: [BR:Common:ErrInvalidArgument]invalid argument错误。先fusermount再重新ossfs挂载即可。
+
+踩坑一：执行BR过程中把少量文件写入oss桶，就报错Database backup <-…> 0.12%
+Error: msg:“Io(Os { code: 1, kind: PermissionDenied, message: “Operation not permitted” })” : [BR:KV:ErrKVUnknown]unknown tikv error
+后来发现：可以echo “aaa” > /dbbak/test.log，但是不能rm /dbbak/test.log rm: cannot remove ‘/dbbak/test.log’: Operation not permitted
+
+在想我的/dbbak目录权限是drwxrwxrwx，会不会不够？按理应该是777了的。
+最后跑到阿里云打开oss管理控制台，果然我的Bucket 授权策略为 读写，我现在改成完全控制就可以rm了。解决了rm问题，就可以顺利地执行BR到OSS了。
+
+### 挂载脚本
+root用户下创建ossfs.sh脚本并执行
+```
+#!/bin/sh
+
+set -e
+
+#配置好oss参数
+AccessKey=OSS的access-key-id
+SecretKey=OSS的access-key-secret
+bucketName='bucket名称'
+Endpoint=http://oss-cn-shenzhen-internal.aliyuncs.com   
+#Endpoint地址请参考：https://help.aliyun.com/document_detail/31837.html?spm=a2c4g.11186623.6.626.581e7a6cMIuIYO
+
+#开始挂载
+mkdir -p /dbbak
+echo "${bucketName}:${AccessKey}:${SecretKey}" > /etc/passwd-ossfs
+chmod 640 /etc/passwd-ossfs
+ossfs ${bucketName} /dbbak -ourl=${Endpoint} -oallow_other
+
+#开机启动
+echo '#! /bin/bash' > /etc/init.d/ossfs
+echo '# chkconfig: 2345 90 10' >> /etc/init.d/ossfs
+echo "ossfs ${bucketName} /dbbak -ourl=${Endpoint} -oallow_other" >> /etc/init.d/ossfs
+chmod a+x /etc/init.d/ossfs
+chkconfig ossfs on
+```
+
+### 执行备份脚本
+```
+su - tidb
+mkdir -p /dbbak/full_20210204
+br backup table --pd 10.0.0.80:2379 --db "xxx" --table "xxx_admin" --storage local:///dbbak/full_20210204 --ratelimit 120 --log-file backuptable.log
+```
